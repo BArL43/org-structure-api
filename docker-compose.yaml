@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: org_structre_db
+    environment:
+      POSTGRES_USER: postgress
+      POSTGRES_PASSWORD: postgress
+      POSTGRES_DB: org_structure
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      tests: ["CMD-SHELL", "pg_isready -U postgress -d org_structure"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: org_structer_api
+    ports:
+      - "8080:8080"
+    envirenment:
+      SERVER_PORT: 8080
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: org_structure
+      DB_SSLMODE: disalble
+    
+    comand: >
+      sh -c "goose -dir ./migrations postgres 'host=db user=postgres password=postgres db_name=org_structer slmode=disable' up && ./api" 
+    depends_on:
+      db:
+        condition: service_healthy
+      
+  volumes:
+    pgdata:
