@@ -163,3 +163,30 @@ func TestDepartmentUseCaseDeleteReassignRequiresTarget(t *testing.T) {
 		t.Fatalf("expected required field, got %v", err)
 	}
 }
+
+func TestDepartmentUseCaseDeleteReassignRejectsDescendantTarget(t *testing.T) {
+	targetID := int64(3)
+	deleteCalled := false
+	repo := &fakeDepartmentRepo{
+		existsFn: func(context.Context, int64) (bool, error) { return true, nil },
+		ancestorFn: func(_ context.Context, ancestorID, descendantID int64) (bool, error) {
+			if ancestorID != 1 || descendantID != targetID {
+				t.Fatalf("unexpected ancestor check: %d -> %d", ancestorID, descendantID)
+			}
+			return true, nil
+		},
+		deleteReFn: func(context.Context, int64, int64) error {
+			deleteCalled = true
+			return nil
+		},
+	}
+
+	uc := NewDepartmentUseCase(repo)
+	err := uc.Delete(context.Background(), 1, "reassign", &targetID)
+	if !errors.Is(err, domain.ErrCycleDetected) {
+		t.Fatalf("expected cycle error, got %v", err)
+	}
+	if deleteCalled {
+		t.Fatal("repository delete must not be called for descendant target")
+	}
+}
