@@ -160,6 +160,13 @@ func (u *departmentUseCase) Delete(ctx context.Context, id int64, mode string, r
 		if !targetExists {
 			return domain.ErrNotFound
 		}
+		isDescendant, err := u.repo.IsAncestor(ctx, id, *reassignID)
+		if err != nil {
+			return err
+		}
+		if isDescendant {
+			return domain.ErrCycleDetected
+		}
 		return u.repo.DeleteAndReassign(ctx, id, *reassignID)
 	default:
 		return domain.ErrInvalidInput
