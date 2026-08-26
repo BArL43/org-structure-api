@@ -1,12 +1,13 @@
 package domain
 
 import (
-	"time"
+	"context"
 	"errors"
+	"time"
 )
 
 var (
-	ErrNotFound      = errors.New("recource not found")
+	ErrNotFound      = errors.New("resource not found")
 	ErrInvalidInput  = errors.New("invalid input data")
 	ErrAlreadyExists = errors.New("department with this name already exists under this parent")
 	ErrCycleDetected = errors.New("cannot move department inside itself or its subtree")
@@ -14,30 +15,34 @@ var (
 )
 
 type Department struct {
-	ID 			int64	  `json:"id" gorm:"primaryKey;autoIncrement:true"`
-	Name		string    `json:"name" gorm:"type:varchar(200);not null"`
-	ParentID    *int64     `json:"parent_id" gorm:"index;default:null"`
-	CreatedAt   time.Time `json:"created_at" gorm:"notnull;default:CURRENT_TIMESTAMP"`
+	ID        int64        `json:"id" gorm:"primaryKey;autoIncrement"`
+	Name      string       `json:"name" gorm:"type:varchar(200);not null"`
+	ParentID  *int64       `json:"parent_id" gorm:"index;default:null"`
+	CreatedAt time.Time    `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP"`
+	Employees []Employee   `json:"employees,omitempty" gorm:"foreignKey:DepartmentID"`
+	Children  []Department `json:"children,omitempty" gorm:"foreignKey:ParentID"`
+}
 
-	Employees   []Employee `json:"employees,omitempty" gorm:"foreignKey:DepartmentID"`
-	Children    []Department `json:"children,omitempty" gorm:"foreignKey:ParentID"`
+type DepartmentUpdate struct {
+	Name        *string
+	ParentID    *int64
+	ParentIDSet bool
 }
 
 type DepartmentRepository interface {
-	Create(dept *Department) error
-	GetByID(id int64, depth int, includeEmployees bool) (*Department, error)
-	Update(dept *Department) error
-	DeleteAndReassign(id int64, reassignToID int64) error
-	DeleteCascade(id int64) error
-
-	Exists(id int64) (bool, error)
-	HasChildWithSameName(parentID *int64, name string) (bool, error)
-	IsAncesstor(parentID int64, childID int64) (bool, error)
+	Create(ctx context.Context, dept *Department) error
+	GetByID(ctx context.Context, id int64, depth int, includeEmployees bool) (*Department, error)
+	Update(ctx context.Context, id int64, update DepartmentUpdate) error
+	DeleteAndReassign(ctx context.Context, id int64, reassignToID int64) error
+	DeleteCascade(ctx context.Context, id int64) error
+	Exists(ctx context.Context, id int64) (bool, error)
+	HasChildWithSameName(ctx context.Context, parentID *int64, name string, excludeID *int64) (bool, error)
+	IsAncestor(ctx context.Context, ancestorID int64, descendantID int64) (bool, error)
 }
 
 type DepartmentUseCase interface {
-	Create(name string, parentID *int64) (*Department, error)
-	GetByID(id int64, depth int, includeEmployees bool) (*Department, error)
-	Update(id int64, name *string, parentID *int64) (*Department,  error)
-	Delete(id int64, mode string, reassignID *int64) error
+	Create(ctx context.Context, name string, parentID *int64) (*Department, error)
+	GetByID(ctx context.Context, id int64, depth int, includeEmployees bool) (*Department, error)
+	Update(ctx context.Context, id int64, update DepartmentUpdate) (*Department, error)
+	Delete(ctx context.Context, id int64, mode string, reassignID *int64) error
 }

@@ -1,6 +1,15 @@
-# Папка данных PostgreSQL (локальная)
-pgdata/
+.env
+.env.*
+!.env.example
 
-# Бинарник goose, если ты скачивал его локально для тестов
+pgdata/
+bin/
+tmp/
+*.log
+
 goose
 goose.exe
+
+.idea/
+.vscode/
+.DS_Store

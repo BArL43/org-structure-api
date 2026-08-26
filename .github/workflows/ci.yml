@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Validate Compose
+        run: docker compose config --quiet
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start stack
+        run: docker compose up --build -d
+      - name: Wait for API
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - name: Smoke test API
+        run: |
+          curl -fsS -X POST http://localhost:8080/departments/ \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Backend"}' >/dev/null
+          curl -fsS 'http://localhost:8080/departments/1?depth=1&include_employees=true' >/dev/null
+          curl -fsS -X POST http://localhost:8080/departments/1/employees/ \
+            -H 'Content-Type: application/json' \
+            -d '{"full_name":"Test User","position":"Go Developer"}' >/dev/null
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v

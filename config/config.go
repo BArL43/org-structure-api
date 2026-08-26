@@ -2,7 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -20,59 +24,65 @@ type DBConfig struct {
 }
 
 func Load() (*Config, error) {
-	cfg := &Config{}
-
-	cfg.ServerPort = getEnv("SERVER_PORT", "8080")
+	cfg := &Config{ServerPort: getEnv("SERVER_PORT", "8080")}
+	if err := validatePort("SERVER_PORT", cfg.ServerPort); err != nil {
+		return nil, err
+	}
 
 	var err error
-	cfg.DB.Host, err = getRequiredEnv("DB_HOST")
-	if err != nil {
+	if cfg.DB.Host, err = getRequiredEnv("DB_HOST"); err != nil {
 		return nil, err
 	}
-
 	cfg.DB.Port = getEnv("DB_PORT", "5432")
-
-	cfg.DB.User, err = getRequiredEnv("DB_USER")
-	if err != nil {
+	if err := validatePort("DB_PORT", cfg.DB.Port); err != nil {
 		return nil, err
 	}
-
-	cfg.DB.Password, err = getRequiredEnv("DB_PASSWORD")
-	if err != nil {
+	if cfg.DB.User, err = getRequiredEnv("DB_USER"); err != nil {
 		return nil, err
 	}
-
-	cfg.DB.Name, err = getRequiredEnv("DB_NAME")
-	if err != nil {
+	if cfg.DB.Password, err = getRequiredEnv("DB_PASSWORD"); err != nil {
 		return nil, err
 	}
-
-	cfg.DB.SSLMode = getEnv("DB_SSLMode", "disable")
+	if cfg.DB.Name, err = getRequiredEnv("DB_NAME"); err != nil {
+		return nil, err
+	}
+	cfg.DB.SSLMode = getEnv("DB_SSLMODE", "disable")
 	return cfg, nil
 }
 
 func (c *Config) GetDSN() string {
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		c.DB.Host,
-		c.DB.Port,
-		c.DB.User,
-		c.DB.Password,
-		c.DB.Name,
-		c.DB.SSLMode,
-	)
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(c.DB.User, c.DB.Password),
+		Host:   net.JoinHostPort(c.DB.Host, c.DB.Port),
+		Path:   c.DB.Name,
+	}
+	query := u.Query()
+	query.Set("sslmode", c.DB.SSLMode)
+	u.RawQuery = query.Encode()
+	return u.String()
 }
 
 func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+	if value, exists := os.LookupEnv(key); exists && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
 	}
 	return defaultValue
 }
 
 func getRequiredEnv(key string) (string, error) {
 	value, exists := os.LookupEnv(key)
+	value = strings.TrimSpace(value)
 	if !exists || value == "" {
 		return "", fmt.Errorf("missing required environment variable: %s", key)
 	}
 	return value, nil
+}
+
+func validatePort(name, value string) error {
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid %s: %q", name, value)
+	}
+	return nil
 }

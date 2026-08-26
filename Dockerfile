@@ -1,24 +1,20 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
-WORKDIR /app
-
+WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.19.2
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/api ./cmd/api/main.go
-
-FROM alpine:3.19
-
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S app \
+    && adduser -S -G app app
 WORKDIR /app
-
-COPY --from=builder /app/bin/api .
-COPY --from=builder /app/migrations ./migrations
-
-ADD https://github.com/pressly/goose/releases/download/v3.19.2/goose_linux_x86_64 /bin/goose
-RUN chmod +x /bin/goose
-
+COPY --from=builder /out/api /app/api
+COPY --from=builder /out/goose /usr/local/bin/goose
+COPY --from=builder /src/migrations /app/migrations
+USER app
 EXPOSE 8080
-
-CMD ["./api"]
+CMD ["/app/api"]

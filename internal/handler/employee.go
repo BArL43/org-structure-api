@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"org-structure-api/internal/domain"
@@ -17,17 +15,10 @@ func NewEmployeeHandler(useCase domain.EmployeeUseCase) *EmployeeHandler {
 	return &EmployeeHandler{useCase: useCase}
 }
 
-// POST department/{id}/employees/
 func (h *EmployeeHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	deptIDStr := r.PathValue("id")
-	deptID, err := strconv.ParseInt(deptIDStr, 10, 64)
+	deptID, err := pathID(r)
 	if err != nil {
-		respondWithError(w, domain.ErrInvalidInput)
+		respondWithError(w, err)
 		return
 	}
 
@@ -36,17 +27,15 @@ func (h *EmployeeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Position string     `json:"position"`
 		HiredAt  *time.Time `json:"hired_at"`
 	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, domain.ErrInvalidInput)
-		return
-	}
-
-	emp, err := h.useCase.Create(deptID, req.FullName, req.Position, req.HiredAt)
-	if err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		respondWithError(w, err)
 		return
 	}
 
+	emp, err := h.useCase.Create(r.Context(), deptID, req.FullName, req.Position, req.HiredAt)
+	if err != nil {
+		respondWithError(w, err)
+		return
+	}
 	respondWithJSON(w, http.StatusCreated, emp)
 }

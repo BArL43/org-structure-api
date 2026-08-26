@@ -1,9 +1,11 @@
 package usecase
 
 import (
-	"org-structure-api/internal/domain"
+	"context"
 	"strings"
 	"time"
+
+	"org-structure-api/internal/domain"
 )
 
 type employeeUseCase struct {
@@ -15,19 +17,17 @@ func NewEmployeeUseCase(empRepo domain.EmployeeRepository, deptRepo domain.Depar
 	return &employeeUseCase{empRepo: empRepo, deptRepo: deptRepo}
 }
 
-func (u *employeeUseCase) Create(deptID int64, fullName, position string, hiredAt *time.Time) (*domain.Employee, error) {
+func (u *employeeUseCase) Create(ctx context.Context, deptID int64, fullName, position string, hiredAt *time.Time) (*domain.Employee, error) {
+	if deptID <= 0 {
+		return nil, domain.ErrInvalidInput
+	}
 	fullName = strings.TrimSpace(fullName)
 	position = strings.TrimSpace(position)
-
-	if fullName == "" || len([]rune(fullName)) > 200 {
+	if !validTextField(fullName) || !validTextField(position) {
 		return nil, domain.ErrInvalidInput
 	}
 
-	if position == "" || len([]rune(position)) > 200 {
-		return nil, domain.ErrInvalidInput
-	}
-
-	deptExists, err := u.deptRepo.Exists(deptID)
+	deptExists, err := u.deptRepo.Exists(ctx, deptID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,16 +35,9 @@ func (u *employeeUseCase) Create(deptID int64, fullName, position string, hiredA
 		return nil, domain.ErrNotFound
 	}
 
-	emp := &domain.Employee{
-		DepartmentID: deptID,
-		FullName:     fullName,
-		Position:     position,
-		HiredAt:      hiredAt,
-	}
-
-	if err := u.empRepo.Create(emp); err != nil {
+	emp := &domain.Employee{DepartmentID: deptID, FullName: fullName, Position: position, HiredAt: hiredAt}
+	if err := u.empRepo.Create(ctx, emp); err != nil {
 		return nil, err
 	}
-
 	return emp, nil
 }

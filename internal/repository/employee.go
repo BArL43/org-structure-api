@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"context"
+
 	"org-structure-api/internal/domain"
 
 	"gorm.io/gorm"
@@ -14,6 +16,6 @@ func NewEmployeeRepository(db *gorm.DB) domain.EmployeeRepository {
 	return &employeeRepository{db: db}
 }
 
-func (r *employeeRepository) Create(emp *domain.Employee) error {
-	return r.db.Create(emp).Error
+func (r *employeeRepository) Create(ctx context.Context, emp *domain.Employee) error {
+	return translatePostgresError(r.db.WithContext(ctx).Create(emp).Error)
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,80 +19,93 @@ import (
 )
 
 func main() {
-	log.Println("Starting organizational structure API...")
+	if err := run(); err != nil {
+		log.Fatalf("organizational structure API stopped: %v", err)
+	}
+}
 
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: cmd/api/main.go: %v", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
-	log.Println("Configuration successfully loaded")
 
 	db, err := repository.NewPostgresDB(cfg.GetDSN())
 	if err != nil {
-		log.Fatalf("Failed to connect to database: cmd/api/main.go: %v", err)
+		return err
 	}
-	log.Println("Database successfully connected")
-
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("Failed to get underlying SQL DB: cmd/api/main.go: %v", err)
+		return fmt.Errorf("get underlying sql.DB: %w", err)
 	}
-	if err := sqlDB.Ping(); err != nil {
-		log.Fatalf("Database ping failed: cmd/api/main.go: %v", err)
+	defer sqlDB.Close()
+
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelPing()
+	if err := sqlDB.PingContext(pingCtx); err != nil {
+		return fmt.Errorf("database ping: %w", err)
 	}
-	log.Println("Database ping successful")
 
 	deptRepo := repository.NewDepartmentRepository(db)
 	empRepo := repository.NewEmployeeRepository(db)
+	deptHandler := handler.NewDepartmentHandler(usecase.NewDepartmentUseCase(deptRepo))
+	empHandler := handler.NewEmployeeHandler(usecase.NewEmployeeUseCase(empRepo, deptRepo))
 
-	deptUseCase := usecase.NewDepartmentUseCase(deptRepo)
-	empUseCase := usecase.NewEmployeeUseCase(empRepo, deptRepo)
-
-	deptHandler := handler.NewDepartmentHandler(deptUseCase)
-	empHandler := handler.NewEmployeeHandler(empUseCase)
-	
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("POST /departments/", deptHandler.Create)
 	mux.HandleFunc("GET /departments/{id}", deptHandler.GetByID)
 	mux.HandleFunc("PATCH /departments/{id}", deptHandler.Update)
 	mux.HandleFunc("DELETE /departments/{id}", deptHandler.Delete)
-
 	mux.HandleFunc("POST /departments/{id}/employees/", empHandler.Create)
-
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"OK","message":"Server is running"}`))
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := sqlDB.PingContext(ctx); err != nil {
+			writeHealth(w, http.StatusServiceUnavailable, "database unavailable")
+			return
+		}
+		writeHealth(w, http.StatusOK, "ok")
 	})
 
 	server := &http.Server{
-		Addr:         ":" + cfg.ServerPort,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              ":" + cfg.ServerPort,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("Server is listening on port %s", cfg.ServerPort)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("HTTP server failed: cmd/api/main.go: %v", err)
-		}
+		log.Printf("server listening on :%s", cfg.ServerPort)
+		serverErr <- server.ListenAndServe()
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	log.Println("Shutting down server gracefully...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: cmd/api/main.go: %v", err)
+	select {
+	case <-signalCtx.Done():
+		log.Println("shutdown signal received")
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		return nil
 	}
 
-	log.Println("Server stopped dynamic resources. Goodbye!")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("graceful shutdown: %w", err)
+	}
+	return nil
+}
+
+func writeHealth(w http.ResponseWriter, status int, state string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": state})
 }

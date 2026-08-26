@@ -1,51 +1,50 @@
 # Organization Structure API
 
-Go backend для управления древовидной структурой подразделений компании и сотрудниками. Проект показывает работу с REST API, PostgreSQL, транзакциями, recursive CTE, Docker и разделением бизнес-логики по слоям.
+![CI](https://github.com/BArL43/org-structure-api/actions/workflows/ci.yml/badge.svg)
 
-> Учебный backend-проект с акцентом на чистую архитектуру, корректную работу с иерархическими данными и предсказуемое поведение API.
+Go backend для управления древовидной структурой подразделений компании и сотрудниками. Учебный проект с акцентом на REST API, PostgreSQL, транзакции, recursive CTE, `context.Context`, тестируемую бизнес-логику и воспроизводимый Docker-запуск.
 
 ## Tech stack
 
-- **Go 1.24**, стандартная библиотека `net/http`
-- **PostgreSQL 16**
-- **GORM**
+- **Go 1.25**, стандартная библиотека `net/http`
+- **PostgreSQL 16**, GORM, recursive CTE
 - **Goose** migrations
 - **Docker / Docker Compose**
-- unit tests с mock-зависимостями
+- **GitHub Actions**: tests, `go vet`, Compose validation и smoke test
 
 ## Что реализовано
 
 ### Departments
 
 - `POST /departments/` — создание подразделения;
-- `GET /departments/{id}` — получение дерева с ограничиваемой глубиной;
-- `PATCH /departments/{id}` — переименование и перемещение подразделения;
-- `DELETE /departments/{id}` — удаление в режимах `cascade` и `reassign`.
+- `GET /departments/{id}?depth=1..5&include_employees=true|false` — получение дерева;
+- `PATCH /departments/{id}` — частичное обновление имени и/или родителя;
+- `parent_id: null` переносит подразделение в корень;
+- `DELETE /departments/{id}?mode=cascade` — удаление ветки;
+- `DELETE /departments/{id}?mode=reassign&reassign_to_department_id=...` — атомарный перенос сотрудников, подъём дочерних подразделений и удаление узла.
 
-Для перемещения подразделений используется рекурсивная проверка дерева через **CTE**, которая запрещает циклы: департамент нельзя переместить внутрь самого себя или собственного поддерева.
-
-Операции, затрагивающие несколько сущностей, выполняются в **PostgreSQL-транзакциях**.
+При перемещении выполняется recursive CTE-проверка, запрещающая циклы. Уникальность имени контролируется в рамках одного parent, включая root-уровень.
 
 ### Employees
 
-- `POST /departments/{id}/employees/` — создание сотрудника в подразделении;
+- `POST /departments/{id}/employees/` — создание сотрудника;
 - проверка существования подразделения;
-- валидация входных данных;
-- корректное отображение доменных ошибок в HTTP status codes.
+- валидация имени и должности;
+- сортировка сотрудников по имени при чтении дерева.
 
-## Architecture
+## Архитектура
 
 ```text
-cmd/api/              # entrypoint, dependency wiring, graceful shutdown
-config/               # environment configuration, fail-fast checks
-internal/domain/       # entities and interfaces
+cmd/api/              # entrypoint, dependency wiring, healthcheck, graceful shutdown
+config/               # environment configuration and validation
+internal/domain/       # entities, errors and interfaces
 internal/usecase/      # business rules
-internal/repository/   # PostgreSQL/GORM, transactions, recursive CTE
-internal/handler/      # HTTP transport, JSON parsing, error mapping
-migrations/            # SQL migrations
+internal/repository/   # PostgreSQL/GORM, CTE and transactions
+internal/handler/      # HTTP transport, strict JSON decoding, error mapping
+migrations/            # PostgreSQL schema
 ```
 
-Бизнес-логика отделена от HTTP и persistence-слоя. Зависимости собираются в entrypoint, а доменный слой не зависит от ORM.
+`context.Context` передаётся от HTTP request через use case до GORM/SQL-запросов. PATCH хранит отдельно значение поля и факт его присутствия, поэтому обновление одного поля не затирает другое.
 
 ## Быстрый запуск
 
@@ -55,33 +54,31 @@ cd org-structure-api
 docker compose up --build
 ```
 
-При старте:
-
-1. поднимается PostgreSQL;
-2. healthcheck ожидает готовность БД;
-3. Goose применяет миграции;
-4. Go-приложение собирается multi-stage Docker build и запускается на `:8080`.
-
-Проверка:
+Compose поднимает PostgreSQL, ждёт healthcheck, применяет Goose-миграции и запускает API на `:8080`.
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-Ожидаемый ответ:
-
 ```json
-{"status":"OK","message":"Server is running"}
+{"status":"ok"}
+```
+
+### Пример
+
+```bash
+curl -X POST http://localhost:8080/departments/ \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Backend"}'
+
+curl 'http://localhost:8080/departments/1?depth=2&include_employees=true'
 ```
 
 ## Tests
 
 ```bash
-go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-Тесты проверяют HTTP/handler-слой и его взаимодействие с бизнес-логикой через изолированные mock-зависимости.
-
-## Почему этот проект полезен как backend-кейс
-
-В нём есть не только CRUD: проект требует корректной работы с иерархическими данными, предотвращения циклов, транзакционного изменения структуры и явного разделения transport / business / persistence слоёв.
+Unit-тесты покрывают handler/usecase сценарии: строгий JSON, query/path parsing, частичный PATCH, `parent_id: null`, duplicate detection, cycle detection и delete validation. CI дополнительно поднимает весь Docker Compose stack и выполняет smoke test API.
