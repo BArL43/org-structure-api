@@ -6,6 +6,17 @@ Go backend для управления древовидной структуро
 
 Это основной Go-проект в моём публичном портфолио: здесь лучше всего видны работа со слоями backend-приложения, транзакциями, SQL-ограничениями, HTTP-контрактом и тестами.
 
+## Быстрый просмотр кода
+
+Если нужно оценить Go/backend-часть за несколько минут:
+
+- [`cmd/api/main.go`](cmd/api/main.go) — wiring зависимостей, запуск HTTP-сервера, healthcheck и graceful shutdown;
+- [`internal/handler/`](internal/handler/) — HTTP transport, строгий JSON-контракт и преобразование ошибок;
+- [`internal/usecase/`](internal/usecase/) — бизнес-правила, PATCH-семантика, проверки циклов и удаления;
+- [`internal/repository/`](internal/repository/) — PostgreSQL/GORM, recursive CTE и транзакционные операции;
+- [`migrations/`](migrations/) — схема PostgreSQL и ограничения данных;
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — race tests, `go vet`, Compose validation и Docker smoke.
+
 ## Tech stack
 
 - **Go 1.25**, стандартная библиотека `net/http`
